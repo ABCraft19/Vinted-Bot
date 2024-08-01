@@ -1,57 +1,66 @@
-const config = require('./config.json');
+const { Client, GatewayIntentBits, REST, Routes, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { token, guildID, adminIDs } = require('./config.json');
 
 const Database = require('easy-json-database');
 const db = new Database('./db.json');
 if (!db.has('subscriptions')) db.set('subscriptions', []);
 
-const Discord = require('discord.js');
-const client = new Discord.Client({
-    intents: [Discord.Intents.FLAGS.GUILDS]
+const client = new Client({
+    intents: [GatewayIntentBits.Guilds]
 });
 
-const synchronizeSlashCommands = require('discord-sync-commands');
-synchronizeSlashCommands(client, [
-    {
-        name: 'abonner',
-        description: 'Abonnez-vous à une URL de recherche',
-        options: [
-            {
-                name: 'url',
-                description: 'L\'URL de la recherche Vinted',
-                type: 3,
-                required: true
-            },
-            {
-                name: 'channel',
-                description: 'Le salon dans lequel vous souhaitez envoyer les notifications',
-                type: 7,
-                required: true
-            }
-        ]
-    },
-    {
-        name: 'désabonner',
-        description: 'Désabonnez-vous d\'une URL de recherche',
-        options: [
-            {
-                name: 'id',
-                description: 'L\'identifiant de l\'abonnement (/abonnements)',
-                type: 3,
-                required: true
-            }
-        ]
-    },
-    {
-        name: 'abonnements',
-        description: 'Accèdez à la liste de tous vos abonnements',
-        options: []
+const synchronizeSlashCommands = async (client) => {
+    const commands = [
+        {
+            name: 'abonner',
+            description: 'Abonnez-vous à une URL de recherche',
+            options: [
+                {
+                    name: 'url',
+                    description: 'L\'URL de la recherche Vinted',
+                    type: 3, // STRING
+                    required: true
+                },
+                {
+                    name: 'channel',
+                    description: 'Le salon dans lequel vous souhaitez envoyer les notifications',
+                    type: 7, // CHANNEL
+                    required: true
+                }
+            ]
+        },
+        {
+            name: 'désabonner',
+            description: 'Désabonnez-vous d\'une URL de recherche',
+            options: [
+                {
+                    name: 'id',
+                    description: 'L\'identifiant de l\'abonnement (/abonnements)',
+                    type: 3, // STRING
+                    required: true
+                }
+            ]
+        },
+        {
+            name: 'abonnements',
+            description: 'Accédez à la liste de tous vos abonnements',
+            options: []
+        }
+    ];
+
+    const rest = new REST({ version: '10' }).setToken(token);
+
+    try {
+        const result = await rest.put(
+            Routes.applicationGuildCommands(client.user.id, guildID),
+            { body: commands }
+        );
+
+        console.log(`🔁 Commandes mises à jour ! ${result.length} commandes créées\n`);
+    } catch (error) {
+        console.error(error);
     }
-], {
-    debug: false,
-    guildId: config.guildID
-}).then((stats) => {
-    console.log(`🔁 Commandes mises à jour ! ${stats.newCommandCount} commandes créées, ${stats.currentCommandCount} commandes existantes\n`)
-});
+};
 
 const vinted = require('vinted-api');
 
@@ -63,7 +72,7 @@ const syncSubscription = (sub) => {
             per_page: '20'
         }).then((res) => {
             if (!res.items) {
-                console.log('Search done bug got wrong response. Promise resolved.', res);
+                console.log('Search done but got wrong response. Promise resolved.', res);
                 resolve();
                 return;
             }
@@ -83,31 +92,34 @@ const syncSubscription = (sub) => {
             const itemsToSend = ((lastItemTimestamp && !isFirstSync) ? items.reverse() : [items[0]]);
 
             for (let item of itemsToSend) {
-                const embed = new Discord.MessageEmbed()
+                const embed = new EmbedBuilder()
                     .setTitle(item.title)
                     .setURL(`https://www.vinted.fr${item.path}`)
                     .setImage(item.photos[0]?.url)
                     .setColor('#008000')
                     .setTimestamp(item.createdTimestamp)
-                    .setFooter(`Article lié à la recherche : ${sub.id}`)
-                    .addField('Taille', item.size || 'vide', true)
-                    .addField('Prix', item.price || 'vide', true)
-                    .addField('Condition', item.status || 'vide', true);
-                client.channels.cache.get(sub.channelID)?.send({ embeds: [embed], components: [
-                    new Discord.MessageActionRow()
-                        .addComponents([
-                            new Discord.MessageButton()
-                                .setLabel('Détails')
-                                .setURL(item.url)
-                                .setEmoji('🔎')
-                                .setStyle('LINK'),
-                            new Discord.MessageButton()
-                                .setLabel('Acheter')
-                                .setURL(`https://www.vinted.fr/transaction/buy/new?source_screen=item&transaction%5Bitem_id%5D=${item.id}`)
-                                .setEmoji('💸')
-                                .setStyle('LINK')
-                        ])
-                ] });
+                    .setFooter({ text: `Article lié à la recherche : ${sub.id}` })
+                    .addFields(
+                        { name: 'Taille', value: item.size || 'vide', inline: true },
+                        { name: 'Prix', value: item.price || 'vide', inline: true },
+                        { name: 'Condition', value: item.status || 'vide', inline: true }
+                    );
+
+                const row = new ActionRowBuilder()
+                    .addComponents(
+                        new ButtonBuilder()
+                            .setLabel('Détails')
+                            .setURL(item.url)
+                            .setEmoji('🔎')
+                            .setStyle(ButtonStyle.Link),
+                        new ButtonBuilder()
+                            .setLabel('Acheter')
+                            .setURL(`https://www.vinted.fr/transaction/buy/new?source_screen=item&transaction%5Bitem_id%5D=${item.id}`)
+                            .setEmoji('💸')
+                            .setStyle(ButtonStyle.Link)
+                    );
+
+                client.channels.cache.get(sub.channelID)?.send({ embeds: [embed], components: [row] });
             }
 
             if (itemsToSend.length > 0) {
@@ -123,7 +135,6 @@ const syncSubscription = (sub) => {
 };
 
 const sync = () => {
-
     if (!lastFetchFinished) return;
     lastFetchFinished = false;
 
@@ -135,10 +146,9 @@ const sync = () => {
         db.set('is_first_sync', false);
         lastFetchFinished = true;
     });
-
 };
 
-client.on('ready', () => {
+client.once('ready', () => {
     console.log(`🔗 Connecté sur le compte de ${client.user.tag} !\n`);
 
     const entries = db.all().filter((e) => e.key !== 'subscriptions' && !e.key.startsWith('last_item_ts'));
@@ -151,7 +161,7 @@ client.on('ready', () => {
         `🤖 Vinted BOT est en ligne !`,
     ];
     let idx = 0;
-    const donate = () => console.log(messages[ idx % 2 ]);
+    const donate = () => console.log(messages[idx % 2]);
     setTimeout(() => {
         donate();
     }, 3000);
@@ -161,16 +171,19 @@ client.on('ready', () => {
     }, 20000);
 
     sync();
-    setInterval(sync, 10);
+    setInterval(sync, 10000);
 
     const { version } = require('./package.json');
     client.user.setActivity(`Vinted BOT | v${version}`);
+
+    synchronizeSlashCommands(client);
 });
 
-client.on('interactionCreate', (interaction) => {
-
+client.on('interactionCreate', async (interaction) => {
     if (!interaction.isCommand()) return;
-    if (!config.adminIDs.includes(interaction.user.id)) return void interaction.reply(`:x: Vous ne disposez pas des droits pour effectuer cette action !`);
+    if (!adminIDs.includes(interaction.user.id)) {
+        return interaction.reply(`:x: Vous ne disposez pas des droits pour effectuer cette action !`);
+    }
 
     switch (interaction.commandName) {
         case 'abonner': {
@@ -178,52 +191,53 @@ client.on('interactionCreate', (interaction) => {
                 id: Math.random().toString(36).substring(7),
                 url: interaction.options.getString('url'),
                 channelID: interaction.options.getChannel('channel').id
-            }
+            };
             db.push('subscriptions', sub);
             db.set(`last_item_ts_${sub.id}`, null);
-            interaction.reply(`:white_check_mark: Votre abonnement a été créé avec succès !\n**URL**: <${sub.url}>\n**Salon**: <#${sub.channelID}>`);
+            await interaction.reply(`:white_check_mark: Votre abonnement a été créé avec succès !\n**URL**: <${sub.url}>\n**Salon**: <#${sub.channelID}>`);
             break;
         }
         case 'désabonner': {
             const subID = interaction.options.getString('id');
-            const subscriptions = db.get('subscriptions')
+            const subscriptions = db.get('subscriptions');
             const subscription = subscriptions.find((sub) => sub.id === subID);
             if (!subscription) {
-                return void interaction.reply(':x: Aucun abonnement trouvé pour votre recherche...');
+                return await interaction.reply(':x: Aucun abonnement trouvé pour votre recherche...');
             }
             const newSubscriptions = subscriptions.filter((sub) => sub.id !== subID);
             db.set('subscriptions', newSubscriptions);
-            interaction.reply(`:white_check_mark: Abonnement supprimé avec succès !\n**URL**: <${subscription.url}>\n**Salon**: <#${subscription.channelID}>`);
+            await interaction.reply(`:white_check_mark: Abonnement supprimé avec succès !\n**URL**: <${subscription.url}>\n**Salon**: <#${subscription.channelID}>`);
             break;
         }
         case 'abonnements': {
             const subscriptions = db.get('subscriptions');
             const chunks = [];
-    
+
             subscriptions.forEach((sub) => {
                 const content = `**ID**: ${sub.id}\n**URL**: ${sub.url}\n**Salon**: <#${sub.channelID}>\n`;
                 const lastChunk = chunks.shift() || [];
                 if ((lastChunk.join('\n').length + content.length) > 1024) {
                     if (lastChunk) chunks.push(lastChunk);
-                    chunks.push([ content ]);
+                    chunks.push([content]);
                 } else {
                     lastChunk.push(content);
                     chunks.push(lastChunk);
                 }
             });
-    
-            interaction.reply(`:white_check_mark: **${subscriptions.length}** abonnements sont actifs !`);
-    
+
+            await interaction.reply(`:white_check_mark: **${subscriptions.length}** abonnements sont actifs !`);
+
             chunks.forEach((chunk) => {
-                const embed = new Discord.MessageEmbed()
-                .setColor('RED')
-                .setAuthor(`Utilisez la commande /désabonner pour supprimer un abonnement !`)
-                .setDescription(chunk.join('\n'));
-            
+                const embed = new EmbedBuilder()
+                    .setColor('RED')
+                    .setAuthor({ name: 'Utilisez la commande /désabonner pour supprimer un abonnement !' })
+                    .setDescription(chunk.join('\n'));
+
                 interaction.channel.send({ embeds: [embed] });
             });
+            break;
         }
     }
 });
 
-client.login(config.TOKEN);
+client.login(token);
